@@ -1,53 +1,32 @@
-# All imports except rllib
-import argparse, os, sys
-from overcooked_ai_py.agents.benchmarking import AgentEvaluator
+import os, pickle, copy, argparse, sys
 import numpy as np
+import pandas as pd
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from human_aware_rl.rllib.rllib import RlLibAgent, get_base_ae
+from tensorflow import keras
+import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+tf.reset_default_graph()
+
+from overcooked_ai_py.agents.agent import AgentPair, AgentFromPolicy
+from overcooked_ai_py.agents.benchmarking import AgentEvaluator
+
+from human_aware_rl.human.process_dataframes import train_test_split
+from human_aware_rl.static import *
+from human_aware_rl.data_dir import DATA_DIR
+
+#import ray
+from ray.tune.result import DEFAULT_RESULTS_DIR
+from human_aware_rl.ppo.ppo_rllib import RllibPPOModel, RllibLSTMPPOModel
+from human_aware_rl.rllib.rllib import OvercookedMultiAgent, save_trainer, gen_trainer_from_params, get_agent_from_trainer, load_trainer, load_agent, evaluate
+from human_aware_rl.imitation.behavior_cloning_tf2 import BehaviorCloningPolicy, load_bc_model
+
+SAVE_DIR = os.path.join(DATA_DIR)
 
 # environment variable that tells us whether this code is running on the server or not
-LOCAL_TESTING = os.getenv('RUN_ENV', 'production') == 'local'
-
-# Sacred setup (must be before rllib imports)
-from sacred import Experiment
-ex = Experiment("PPO RLLib")
-
-# Necessary work-around to make sacred pickling compatible with rllib
-from sacred import SETTINGS
-SETTINGS.CONFIG.READ_ONLY_CONFIG = False
-
-# Slack notification configuration
-from sacred.observers import SlackObserver
-if os.path.exists('slack.json') and not LOCAL_TESTING:
-    slack_obs = SlackObserver.from_config('slack.json')
-    ex.observers.append(slack_obs)
-
-    # Necessary for capturing stdout in multiprocessing setting
-    SETTINGS.CAPTURE_MODE = 'sys'
-
-# rllib and rllib-dependent imports
-# Note: tensorflow and tensorflow dependent imports must also come after rllib imports
-# This is because rllib disables eager execution. Otherwise, it must be manually disabled
-import ray
-from ray.tune.result import DEFAULT_RESULTS_DIR
-from ray.tune.registry import register_env
-from ray.rllib.models import ModelCatalog
-from ray.rllib.agents.ppo.ppo import PPOTrainer
-from human_aware_rl.ppo.ppo_rllib import RllibPPOModel, RllibLSTMPPOModel
-from human_aware_rl.rllib.rllib import OvercookedMultiAgent, save_trainer, gen_trainer_from_params
-from human_aware_rl.imitation.behavior_cloning_tf2 import BehaviorCloningPolicy, BC_SAVE_DIR
-
-
-###################### Temp Documentation #######################
-#   run the following command in order to train a PPO self-play #
-#   agent with the static parameters listed in my_config        #
-#                                                               #
-#   python ppo_rllib_client.py                                  #
-#                                                               #
-#   In order to view the results of training, run the following #
-#   command                                                     #
-#                                                               #
-#   tensorboard --log-dir ~/ray_results/                        #
-#                                                               #
-#################################################################
+LOCAL_TESTING = True
 
 # Dummy wrapper to pass rllib type checks
 def _env_creator(env_config):
@@ -55,7 +34,6 @@ def _env_creator(env_config):
     from human_aware_rl.rllib.rllib import OvercookedMultiAgent 
     return OvercookedMultiAgent.from_config(env_config)
 
-@ex.config
 def my_config():
     ### Model params ###
 
@@ -81,7 +59,7 @@ def my_config():
     num_workers = 30 if not LOCAL_TESTING else 2
 
     # list of all random seeds to use for experiments, used to reproduce results
-    seeds = [0]
+    seeds = [1]
 
     # Placeholder for random for current trial
     seed = None
@@ -104,7 +82,7 @@ def my_config():
     shared_policy = True
 
     # Number of training iterations to run
-    num_training_iters = 420 if not LOCAL_TESTING else 2
+    num_training_iters = 420 if not LOCAL_TESTING else 10000
 
     # Stepsize of SGD.
     lr = 5e-5
@@ -144,10 +122,10 @@ def my_config():
     num_sgd_iter = 8 if not LOCAL_TESTING else 1
 
     # How many trainind iterations (calls to trainer.train()) to run before saving model checkpoint
-    save_freq = 25
+    save_freq = 100
 
     # How many training iterations to run between each evaluation
-    evaluation_interval = 50 if not LOCAL_TESTING else 1
+    evaluation_interval = 50 if not LOCAL_TESTING else 0
 
     # How many timesteps should be in an evaluation episode
     evaluation_ep_length = 400
@@ -170,23 +148,17 @@ def my_config():
     # Whether to log training progress and debugging info
     verbose = True
 
-
     ### BC Params ###
     # path to pickled policy model for behavior cloning
-    bc_model_dir = os.path.join(BC_SAVE_DIR, "default")
+    # bc_model_dir = os.path.join(SAVE_DIR, "train")
+    bc_model_dir = '/Users/rupaln/Documents/uiuc/research/human_aware_rl/human_aware_rl/imitation/bc_runs/not9_train'
 
     # Whether bc agents should return action logit argmax or sample
     bc_stochastic = True
 
-
-
     ### Environment Params ###
     # Which overcooked level to use
     layout_name = "asymmetric_advantages_tomato"
-
-    # all_layout_names = '_'.join(layout_names)
-
-    # Name of directory to store training results in (stored in ~/ray_results/<experiment_name>)
 
     params_str = str(use_phi) + "_nw=%d_vf=%f_es=%f_en=%f_kl=%f" % (
         num_workers,
@@ -216,11 +188,6 @@ def my_config():
 
     # Linearly anneal the reward shaping factor such that it reaches zero after this number of timesteps
     reward_shaping_horizon = float('inf')
-
-    # bc_factor represents that ppo agent gets paired with a bc agent for any episode
-    # schedule for bc_factor is represented by a list of points (t_i, v_i) where v_i represents the 
-    # value of bc_factor at timestep t_i. Values are linearly interpolated between points
-    # The default listed below represents bc_factor=0 for all timesteps
     bc_schedule = OvercookedMultiAgent.self_play_bc_schedule
 
 
@@ -320,12 +287,11 @@ def my_config():
         "verbose" : verbose
     }
 
+    return params
 
 def run(params):
     # Retrieve the tune.Trainable object that is used for the experiment
     trainer = gen_trainer_from_params(params)
-
-    # Object to store training results in
     result = {}
 
     # Training loop
@@ -336,36 +302,137 @@ def run(params):
 
         if i % params['save_every'] == 0:
             save_path = save_trainer(trainer, params)
-            if params['verbose']:
-                print("saved trainer at", save_path)
 
     # Save the state of the experiment at end
     save_path = save_trainer(trainer, params)
-    if params['verbose']:
-        print("saved trainer at", save_path)
+    print("saved trainer at", save_path)
 
     return result
 
+def run_trainer(trainer, params):
+    # Retrieve the tune.Trainable object that is used for the experiment
+    result = {}
 
-@ex.automain
+    # Training loop
+    for i in range(params['num_training_iters']):
+        if params['verbose']:
+            print("Starting training iteration", i)
+        result = trainer.train()
+
+        if i % params['save_every'] == 0:
+            save_path = save_trainer(trainer, params)
+
+    # Save the state of the experiment at end
+    save_path = save_trainer(trainer, params)
+    print("saved trainer at", save_path)
+
+    return result
+
+def load_data(file):
+    data = pd.read_pickle(file)
+    print(data['layout_name'])
+    split = train_test_split(data, print_stats=True)
+    layouts = np.unique(data['layout_name'])
+    train_trials = pd.concat([split[layout]["train"] for layout in layouts])
+    test_trials = pd.concat([split[layout]["test"] for layout in layouts])
+    train_trials.to_pickle("2020_hh_trials_playertrain.pickle")
+    test_trials.to_pickle("2020_hh_trials_playertest.pickle")
+    return train_trials, test_trials
+
+def _get_base_ae(bc_params):
+    return get_base_ae(bc_params['mdp_params'], bc_params['env_params'])
+
+def evaluate_ppo_and_bc_models_for_layout(layout='asymmetric_advantages_tomato'):
+    ppo_bc_performance = defaultdict(lambda: defaultdict(list))
+    num_rounds = 1
+    seeds = [0]
+
+    agent_bc_test, bc_params = load_bc_model('/Users/rupaln/Documents/uiuc/research/human_aware_rl/human_aware_rl/imitation/bc_runs/not9_test')
+    agent_bc_new, bc_params_new = load_bc_model('/Users/rupaln/Documents/uiuc/research/human_aware_rl/human_aware_rl/imitation/bc_runs/9')
+    agent_bc_train, bc_params_train = load_bc_model('/Users/rupaln/Documents/uiuc/research/human_aware_rl/human_aware_rl/imitation/bc_runs/not9_train')
+    
+    base_ae = _get_base_ae(bc_params)
+    base_env = base_ae.env
+    def featurize_fn(state):
+        return base_env.featurize_state_mdp(state)
+    
+    ppo_bc_holdout_path = '/Users/rupaln/ray_results/PPO_asymmetric_advantages_tomato_True_nw=2_vf=0.000100_es=0.200000_en=0.100000_kl=0.200000_1_2022-06-09_00-27-30mur9pciv/checkpoint_10000/config.pkl'
+    # ppo_bc_all_path = '/Users/rupaln/ray_results/PPO_asymmetric_advantages_tomato_True_nw=2_vf=0.000100_es=0.200000_en=0.100000_kl=0.200000_0_2022-04-18_19-47-151845fyll/checkpoint_10000/'
+    evaluator = AgentEvaluator.from_layout_name(mdp_params=bc_params["mdp_params"], env_params=bc_params["env_params"])
+    
+    for seed_idx in range(num_rounds):
+        agent_ppo_bc_holdout_trainer = load_trainer(ppo_bc_holdout_path)
+        print(agent_ppo_bc_holdout_trainer._evaluate())
+        agent_ppo_bc_holdout = get_agent_from_trainer(agent_ppo_bc_holdout_trainer)
+        # agent_ppo_bc_all = get_agent_from_trainer(load_trainer(ppo_bc_all_path))
+
+        # how well does agent do with itself?
+        #ppo_and_ppo = evaluator.evaluate_agent_pair(AgentPair(agent_ppo_bc_holdout, agent_ppo_bc_holdout, allow_duplicate_agents=True), num_games=max(int(num_rounds/2), 1), display=False, native_eval=True)
+        #ppo_and_ppo = evaluate(bc_params['evaluation_params'], bc_params['mdp_params'], None, agent_ppo_bc_holdout_trainer.get_policy('ppo'), agent_ppo_bc_holdout_trainer.get_policy('ppo'), None, None, False)
+        #avg_ppo_and_ppo = np.mean(ppo_and_ppo['ep_returns'])
+        #ppo_bc_performance[layout]["PPO_BC_holdout+PPO_BC_holdout"].append(avg_ppo_and_ppo)
+
+        # How well it generalizes to new agent in simulation?
+        #pair = AgentPair(agent_ppo_bc_holdout, RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_new, bc_params_new), agent_index=1, featurize_fn=featurize_fn))
+        #ppo_and_bc_new = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
+        #avg_ppo_and_bc = np.mean(ppo_and_bc_new['ep_returns'])
+        #ppo_bc_performance[layout]["PPO_BC_holdout+BC_new_0"].append(avg_ppo_and_bc)
+
+        #pair = AgentPair(RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_new, bc_params_new), agent_index=0, featurize_fn=featurize_fn), agent_ppo_bc_holdout)
+        #bc_and_ppo_new = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
+        #avg_bc_and_ppo = np.mean(bc_and_ppo_new['ep_returns'])
+        #ppo_bc_performance[layout]["PPO_BC_holdout+BC_new_1"].append(avg_bc_and_ppo)
+        
+        # How well could we do if we knew true model BC?
+        #pair = AgentPair(agent_ppo_bc_holdout, RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_train, bc_params), agent_index=1, featurize_fn=featurize_fn))
+        #ppo_and_bc = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
+        #avg_ppo_and_bc = np.mean(ppo_and_bc['ep_returns'])
+        #ppo_bc_performance[layout]["PPO_BC_holdout+BC_train_0"].append(avg_ppo_and_bc)
+
+        #pair = AgentPair(RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_train, bc_params), agent_index=0, featurize_fn=featurize_fn), agent_ppo_bc_holdout)
+        #bc_and_ppo = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
+        #avg_bc_and_ppo = np.mean(bc_and_ppo['ep_returns'])
+        #ppo_bc_performance[layout]["PPO_BC_holdout+BC_train_1"].append(avg_bc_and_ppo)
+    
+    return ppo_bc_performance
+
+def plot_runs_training_curves(ppo_bc_model_paths, seeds, single=False):
+    # Plot PPO BC models
+    for run_type, type_dict in ppo_bc_model_paths.items():
+        print(run_type)
+        for layout, layout_model_path in type_dict.items():
+            print(layout)
+            plt.figure(figsize=(8,5))
+            # plot_ppo_run(layout_model_path, sparse=True, print_config=False, single=single, seeds=seeds[run_type])
+            plt.xlabel("Environment timesteps")
+            plt.ylabel("Mean episode reward")
+            plt.savefig("rew_ppo_bc_{}_{}".format(run_type, layout), bbox_inches='tight')
+            plt.show()
+
 def main(params):
     # List of each random seed to run
     seeds = params['seeds']
     del params['seeds']
-
-    # List to store results dicts (to be passed to sacred slack observer)
+    # print(params['bc_params']['bc_config']['model_dir'])
+    params['bc_params']['bc_config']['model_dir'] = '/home/rupaln/dev/human_aware_rl/human_aware_rl/imitation/bc_runs/9'
     results = []
+    ppo_bc_holdout_path = '/home/rupaln/dev/human_aware_rl/human_aware_rl/ppo/model_not9/checkpoint_10000/config.pkl'
+    agent_ppo_bc_holdout = load_trainer(ppo_bc_holdout_path)
 
     # Train an agent to completion for each random seed specified
     for seed in seeds:
         # Override the seed
         params['training_params']['seed'] = seed
-
         # Do the thing
-        result = run(params)
+        #result = run(params)
+        result = run_trainer(agent_ppo_bc_holdout, params)
         results.append(result)
 
-    # Return value gets sent to our slack observer for notification
     average_sparse_reward = np.mean([res['custom_metrics']['sparse_reward_mean'] for res in results])
     average_episode_reward = np.mean([res['episode_reward_mean'] for res in results])
-    return { "average_sparse_reward" : average_sparse_reward, "average_total_reward" : average_episode_reward }
+    print("average_sparse_reward: " + str(average_sparse_reward), " average_total_reward: " + str(average_episode_reward))
+
+if __name__ == "__main__":
+    main(my_config())
+    # load_data('/Users/rupaln/Documents/uiuc/research/human_aware_rl/human_aware_rl/static/human_data/cleaned/2020_hh_trials_player9.pickle')
+    # print(evaluate_ppo_and_bc_models_for_layout())

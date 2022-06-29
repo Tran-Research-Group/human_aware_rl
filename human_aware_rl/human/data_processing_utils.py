@@ -128,6 +128,7 @@ def convert_joint_df_trajs_to_overcooked_single(main_trials, layouts, silent=Fal
     human_indices = []
     num_trials_for_layout = {}
     for layout_name in layouts:
+        print(layout_name)
         trial_ids = np.unique(main_trials[main_trials['layout_name'] == layout_name]['trial_id'])
         num_trials = len(trial_ids)
         num_trials_for_layout[layout_name] = num_trials

@@ -126,6 +126,9 @@ data/pbt_exp/
 data/gail_runs/
 data/joint_ppo_runs/
 data/ppo_exp/
+human_aware_rl/ppo/model_not9
+human_aware_rl/imitation/bc_runs
+human_aware_rl/static/human_data/cleaned/*.pickle
 
 # Other files
 transfer_agent.sh

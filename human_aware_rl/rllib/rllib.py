@@ -100,7 +100,7 @@ class OvercookedMultiAgent(MultiAgentEnv):
     DEFAULT_CONFIG = {
         # To be passed into OvercookedGridWorld constructor
         "mdp_params" : {
-            "layout_name" : "cramped_room",
+            "layout_name" : "asymmetric_advantages_tomato",
             "rew_shaping_params" : {}
         },
         # To be passed into OvercookedEnv constructor
@@ -640,6 +640,7 @@ def load_trainer(save_path):
     trainer = gen_trainer_from_params(config)
 
     # Load weights into dummy object
+    save_path = os.path.join(os.path.dirname(save_path), "checkpoint-" + str(config['num_training_iters']))
     trainer.restore(save_path)
     return trainer
 
