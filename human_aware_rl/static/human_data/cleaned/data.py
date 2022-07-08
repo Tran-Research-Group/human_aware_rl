@@ -43,6 +43,7 @@ def combine_train_curves(first, second):
     df1 = pd.DataFrame(data1)
     df2 = pd.DataFrame(data2)
     df = pd.concat([df1, df2])
+    # df = df[(df['timesteps_total'] > 7000000) & (df['timesteps_total'] < 10000000)]
     # plot data
     df.plot(x='timesteps_total', y='episode_reward_mean')
     plt.axvline(x=8000800, color='k', linestyle='--')
