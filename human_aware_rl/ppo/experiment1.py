@@ -158,7 +158,7 @@ def my_config():
 
     ### Environment Params ###
     # Which overcooked level to use
-    layout_name = "asymmetric_advantages_tomato"
+    layout_name = "cramped_room"
 
     params_str = str(use_phi) + "_nw=%d_vf=%f_es=%f_en=%f_kl=%f" % (
         num_workers,
@@ -373,10 +373,10 @@ def evaluate_ppo_and_bc_models_for_layout(layout='asymmetric_advantages_tomato')
         #ppo_bc_performance[layout]["PPO_BC_holdout+PPO_BC_holdout"].append(avg_ppo_and_ppo)
 
         # How well it generalizes to new agent in simulation?
-        #pair = AgentPair(agent_ppo_bc_holdout, RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_new, bc_params_new), agent_index=1, featurize_fn=featurize_fn))
-        #ppo_and_bc_new = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
-        #avg_ppo_and_bc = np.mean(ppo_and_bc_new['ep_returns'])
-        #ppo_bc_performance[layout]["PPO_BC_holdout+BC_new_0"].append(avg_ppo_and_bc)
+        pair = AgentPair(agent_ppo_bc_holdout, RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_new, bc_params_new), agent_index=1, featurize_fn=featurize_fn))
+        ppo_and_bc_new = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
+        avg_ppo_and_bc = np.mean(ppo_and_bc_new['ep_returns'])
+        ppo_bc_performance[layout]["PPO_BC_holdout+BC_new_0"].append(avg_ppo_and_bc)
 
         #pair = AgentPair(RlLibAgent(BehaviorCloningPolicy.from_model(agent_bc_new, bc_params_new), agent_index=0, featurize_fn=featurize_fn), agent_ppo_bc_holdout)
         #bc_and_ppo_new = evaluator.evaluate_agent_pair(pair, num_games=num_rounds, display=False)
@@ -414,18 +414,18 @@ def main(params):
     seeds = params['seeds']
     del params['seeds']
     # print(params['bc_params']['bc_config']['model_dir'])
-    params['bc_params']['bc_config']['model_dir'] = '/home/rupaln/dev/human_aware_rl/human_aware_rl/imitation/bc_runs/9'
+    # params['bc_params']['bc_config']['model_dir'] = '/home/rupaln/dev/human_aware_rl/human_aware_rl/imitation/bc_runs/9'
     results = []
-    ppo_bc_holdout_path = '/home/rupaln/dev/human_aware_rl/human_aware_rl/ppo/model_not9/checkpoint_10000/config.pkl'
-    agent_ppo_bc_holdout = load_trainer(ppo_bc_holdout_path)
+    # ppo_bc_holdout_path = '/home/rupaln/dev/human_aware_rl/human_aware_rl/ppo/model_not9/checkpoint_10000/config.pkl'
+    # agent_ppo_bc_holdout = load_trainer(ppo_bc_holdout_path)
 
     # Train an agent to completion for each random seed specified
     for seed in seeds:
         # Override the seed
         params['training_params']['seed'] = seed
         # Do the thing
-        #result = run(params)
-        result = run_trainer(agent_ppo_bc_holdout, params)
+        result = run(params)
+        #result = run_trainer(agent_ppo_bc_holdout, params)
         results.append(result)
 
     average_sparse_reward = np.mean([res['custom_metrics']['sparse_reward_mean'] for res in results])
